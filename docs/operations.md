@@ -266,7 +266,7 @@ PY
 
 ### 无人登录冷启动与通电恢复窗口
 
-安装器要求 FileVault 明确 Off；On/未知时 BLOCKED，不能自动关闭，也不启用自动登录或保存解锁凭据。先看 `fdesetup status`、`pmset -g cap`、`pmset -g custom` 和安装报告：
+默认 `--startup-mode unattended` 要求 FileVault 明确 Off；On/未知时 BLOCKED。保留 FileVault 的交付用 `--startup-mode after-unlock`：允许明确 On，状态未知仍停止；每次冷启动后由授权人员解锁，再由系统服务自动恢复 Docker 和代理。不要自动关闭 FileVault、启用自动登录或保存解锁凭据。先看 `fdesetup status`、`pmset -g cap`、`pmset -g custom` 和安装报告的 `startup_mode` / `manual_unlock_required` / `cold_boot_acceptance`：
 
 | 电源能力 | 可作的结论 |
 | --- | --- |
@@ -276,8 +276,8 @@ PY
 
 支持时安装器设 AC sleep=0，保存修改前和每次修改后的观察值；失败/未知读回需按报告恢复或调查。此策略不保证笔记本合盖运行。
 
-当前安装/会话启动可先验证；冷启动仅在现场负责人明确授权的窗口执行，先安排独立管理通道、现场观察人和失败恢复。按实际支持的能力测试关机/断电再接 AC（或仅掉电恢复），**整个验收期间所有用户保持未登录**。现场记录开机/登录状态、时间、电源动作；由上海操作人确认全部交付 tag 注册，并逐个重复 HTTPS、仅日本可见 DNS marker、UDP STUN 和策略链/出口取证。必要的系统诊断由已授权的非 GUI 管理通道读取。若先登录才检查，不能证明无人登录恢复；不得为完成测试自动登录。
+当前安装/会话启动可先验证；冷启动仅在现场负责人明确授权的窗口执行，先安排独立管理通道、现场观察人和失败恢复。按实际支持的能力测试关机/断电再接 AC（或仅掉电恢复）。`unattended` 的**整个验收期间所有用户保持未登录且不解锁**；FileVault On 的 `after-unlock` 则记录人工解锁时间，再检查系统服务、Docker 和代理是否自动恢复，不手动启动 VM/容器。人工解锁可能同时登录该账户；如实记录，不能宣称无人解锁启动，也不为测试启用自动登录。由上海操作人确认全部交付 tag 注册，并逐个重复 HTTPS、仅日本可见 DNS marker、UDP STUN 和策略链/出口取证。必要的系统诊断由已授权的管理通道读取。
 
 无授权窗口时保持 PENDING，不自行重启/断电。只有掉电恢复能力时，把通电开机目标标为 BLOCKED/未满足，并单独记录可做的测试。`RunAtLoad`、daemon 已安装、当前 running、Compose restart 或 health 不能代替这一现场证据。
 
-每个 tag 结果至少为：`tag | registration | HTTPS | Japan-only DNS marker | UDP + selected-policy evidence | observed egress/family | time | evidence/owner`。整机另记文件权限、镜像身份、system daemon/PID、专用 socket、当前启动、FileVault/电源能力与原值、所有用户未登录的冷启动证据。未操作的一侧 NOT RUN，条件缺失 BLOCKED，无窗口 PENDING，部分成功 PARTIAL。此文不声称任何现场步骤已完成。
+每个 tag 结果至少为：`tag | registration | HTTPS | Japan-only DNS marker | UDP + selected-policy evidence | observed egress/family | time | evidence/owner`。整机另记文件权限、镜像身份、system daemon/PID、专用 socket、当前启动、FileVault/电源能力与原值，以及所选模式的无人解锁或人工解锁恢复证据。未操作的一侧 NOT RUN，条件缺失 BLOCKED，无窗口 PENDING，部分成功 PARTIAL。此文不声称任何现场步骤已完成。

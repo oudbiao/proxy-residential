@@ -27,7 +27,16 @@ bash scripts/install-macos.sh --image "$INSTALL_IMAGE" \
 
 安装器用物理 CPU 识别 Apple Silicon（含 Rosetta shell），使用 `/opt/homebrew` 原生 ARM 工具；Intel 使用 `/usr/local` 和 amd64。要求硬件虚拟化、ARM macOS 13.5+ 或 Intel macOS 15.5+、Lima >=2.2。支持的官方 VZ `docker-rootful` 模板创建专用 VM；已有 Docker Desktop/OrbStack 及当前 context、其他工作负载保留。独立 Docker socket/config 和系统 LaunchDaemon 可在所有用户仍未图形登录时启动，无需自动登录。工具依据：[Homebrew 安装](https://docs.brew.sh/Installation)、[Lima autostart](https://lima-vm.io/docs/config/autostart/)。
 
-FileVault 必须明确为 Off；On/未知时安装器报告 BLOCKED，绝不自动关闭。现场所有者需另行决定磁盘解锁策略。`--dry-run` 只读，不下载依赖、不建目录/VM、不改电源或启动项；缺依赖时会直接报告，在线镜像拉取/摘要校验留到实际安装。已有安装或同名 VM/daemon 冲突应先检查，不能覆盖。
+默认 `--startup-mode unattended` 要求 FileVault 明确为 Off；On/未知时安装器报告 BLOCKED，绝不自动关闭。需要保留 FileVault 时，明确选用人工解锁后的启动方式：
+
+```sh
+bash scripts/install-macos.sh --image "$INSTALL_IMAGE" \
+  --compose /absolute/private/compose.japan.yaml --startup-mode after-unlock
+```
+
+`after-unlock` 允许 FileVault 明确 On 或 Off；状态未知仍 BLOCKED。FileVault 开启时，每次冷启动/断电恢复后先由授权人员解锁磁盘，系统启动后由同一个 Lima 系统服务自动启动 Docker 和代理。安装器不保存解锁口令、不启用自动登录、不修改 FileVault；不能把这种方式报告为完全无人解锁的冷启动。报告分别记录 `startup_mode`、`filevault`、`manual_unlock_required` 和对应的待验收状态。
+
+`--dry-run` 只读，不下载依赖、不建目录/VM、不改电源或启动项；缺依赖时会直接报告，在线镜像拉取/摘要校验留到实际安装。已有安装或同名 VM/daemon 冲突应先检查，不能覆盖。
 
 ## 离线镜像回退与构建
 
@@ -137,7 +146,7 @@ launchctl print system/io.lima-vm.daemon.proxy-jp
 
 报告保存原始、请求和实际观察到的 AC 电源设置及每个 tag 状态。支持 `autorestartatconnect` 才能配置通电开机；只有 `autorestart` 时仅表示掉电恢复，不能承诺关机后接通电源开机；两者不支持时自动恢复未验证。支持时设置 AC `sleep=0`。不承诺笔记本合盖持续运行。卸载启动项使用 `"$HOME/.proxy-jp/bin/uninstall"`；保留凭据、VM 数据及电源设置，按保存的原值和现场决定另行恢复电源策略。
 
-系统服务安装成功仅证明当前会话运行。实际冷启动需在现场负责人授权窗口，保持**所有用户未登录**，从上海验证全部节点注册和 HTTPS/DNS/UDP；无窗口保持 PENDING。FileVault、供电能力、独立远程管理和恢复安排见 [运维验收](docs/operations.md)。
+系统服务安装成功仅证明当前会话运行。实际冷启动需在现场负责人授权窗口，从上海验证全部节点注册和 HTTPS/DNS/UDP。`unattended` 验收要求**所有用户未登录且无需解锁**；FileVault 开启的 `after-unlock` 则记录人工解锁及后续自动恢复，不宣称无人解锁启动。无窗口保持 PENDING。FileVault、供电能力、独立远程管理和恢复安排见 [运维验收](docs/operations.md)。
 
 ## 验证
 

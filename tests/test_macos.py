@@ -207,6 +207,69 @@ class MacTests(unittest.TestCase):
             self.assertIn('BLOCKED', out)
             self.assertFalse(self.target.exists())
 
+    def test_after_unlock_filevault_on_installs_and_records_manual_recovery(self):
+        self.fv = 'FileVault is On.'
+        ref = self.online()
+        code, out = self.install('--image', ref, '--startup-mode', 'after-unlock')
+        self.assertEqual(code, 0, out)
+        report = json.loads((self.target / 'installation-report.json').read_text())
+        self.assertEqual(report['filevault'], 'on')
+        self.assertEqual(report['startup_mode'], 'after-unlock')
+        self.assertTrue(report['manual_unlock_required'])
+        self.assertEqual(report['cold_boot_acceptance'], 'pending onsite power-cycle and manual disk unlock')
+        self.assertIn('manual disk unlock', out)
+        self.assertIn('running with PID', report['boot_daemon'])
+        self.assertEqual([a for a, _ in self.calls if 'fdesetup' in a], [['fdesetup', 'status']])
+
+    def test_after_unlock_filevault_on_dry_run_is_read_only_and_explicit(self):
+        self.fv = 'FileVault is On.'
+        code, out = self.install('--startup-mode=after-unlock', '--dry-run')
+        self.assertEqual(code, 0, out)
+        self.assertIn('"manual_unlock_required": true', out)
+        self.assertIn('manual disk unlock', out)
+        self.assertFalse(self.target.exists())
+        self.assertFalse(any(set(a) & {'sudo', 'create', 'start', 'enable', 'load', 'up'} for a, _ in self.calls))
+
+    def test_after_unlock_unknown_filevault_blocks_before_writes(self):
+        self.fv = 'unknown'
+        code, out = self.install('--startup-mode', 'after-unlock')
+        self.assertEqual(code, 2, out)
+        self.assertIn('BLOCKED', out)
+        self.assertFalse(self.target.exists())
+
+    def test_shell_filevault_gate_requires_explicit_after_unlock_and_known_state(self):
+        shell = '''source "$1"
+fv_fixture="$2"
+fdesetup() { [ "$*" = status ] || return 99; printf '%s\\n' "$fv_fixture"; }
+check_filevault "$3"
+'''
+        for status, mode, expected in [('FileVault is Off.', 'unattended', 0),
+                                       ('FileVault is On.', 'unattended', 2),
+                                       ('FileVault is On.', 'after-unlock', 0),
+                                       ('unknown', 'after-unlock', 2)]:
+            with self.subTest(status=status, mode=mode):
+                result = subprocess.run(['/bin/bash', '-c', shell, 'test',
+                    str(ROOT / 'scripts/install-macos.sh'), status, mode], text=True, capture_output=True)
+                self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_shell_startup_mode_parsing_reaches_gate_before_dependency_install(self):
+        shell = '''source "$1"
+shift
+uname() { echo Darwin; }
+id() { echo 501; }
+choose_arch() { image_arch=arm64; }
+sw_vers() { echo 26.0; }
+sysctl() { echo 1; }
+fdesetup() { echo unknown; }
+check_filevault() { printf 'gate-mode=%s\\n' "$1"; return 2; }
+main "$@"
+'''
+        for flags in (['--startup-mode', 'after-unlock'], ['--startup-mode=after-unlock']):
+            result = subprocess.run(['/bin/bash', '-c', shell, 'test',
+                str(ROOT / 'scripts/install-macos.sh'), *flags], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('gate-mode=after-unlock', result.stdout)
+
     def test_boot_install_is_private_portable_and_only_loads_native_image(self):
         code, out = self.install()
         self.assertEqual(code, 0, out)

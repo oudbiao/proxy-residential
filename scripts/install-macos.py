@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Dedicated Lima Docker host with system boot autostart; never needs GUI login.
+"""Dedicated Lima Docker host with system boot autostart after disk unlock.
 
 Use install-macos.sh for dependency bootstrap. Dry-run only reads and validates;
-cold-boot acceptance always requires an onsite power-cycle with no login.
+unattended mode requires FileVault off; after-unlock permits manual disk unlock.
+Cold-boot acceptance always requires an authorized onsite power-cycle.
 """
 import argparse
 import getpass
@@ -128,6 +129,8 @@ def main(argv=None):
     parser.add_argument('--limactl', default=shutil.which('limactl') or 'limactl')
     parser.add_argument('--daemon-path', type=Path, default=Path('/Library/LaunchDaemons') / (LABEL + '.plist'), help=argparse.SUPPRESS)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--startup-mode', choices=['unattended', 'after-unlock'], default='unattended',
+                        help='after-unlock keeps FileVault on and requires manual disk unlock after cold boot')
     parser.add_argument('--uninstall', action='store_true')
     args = parser.parse_args(argv)
     target = args.install_dir.expanduser().absolute()
@@ -136,7 +139,7 @@ def main(argv=None):
     env = clean_env()
     env['LIMA_HOME'] = str(home)
     report = {'status': 'preflight', 'vm': INSTANCE, 'lima_home': str(home), 'socket': str(socket),
-              'daemon': str(args.daemon_path), 'owner': getpass.getuser(),
+              'daemon': str(args.daemon_path), 'owner': getpass.getuser(), 'startup_mode': args.startup_mode,
               'cold_boot_acceptance': 'pending onsite power-cycle without login'}
     created = False
     stage = 'preflight'
@@ -170,9 +173,16 @@ def main(argv=None):
             raise InstallError('Lima 2.2 or later required')
         report.update(architecture=arch, lima_version=version, macos=command(['sw_vers', '-productVersion']).strip())
         fv = command(['fdesetup', 'status'], check=False).strip()
-        report['filevault'] = 'off' if fv == 'FileVault is Off.' else 'on-or-unknown'
-        if report['filevault'] != 'off':
-            raise InstallError('BLOCKED: FileVault is on or unknown. Unattended cold boot requires FileVault clearly off; review this locally before retrying. Installer never disables FileVault.')
+        report['filevault'] = {'FileVault is Off.': 'off', 'FileVault is On.': 'on'}.get(fv, 'unknown')
+        if report['filevault'] == 'unknown':
+            raise InstallError('BLOCKED: FileVault status is unknown; inspect locally before installation. Installer never changes FileVault.')
+        if report['filevault'] == 'on' and args.startup_mode != 'after-unlock':
+            raise InstallError('BLOCKED: FileVault is on. Unattended cold boot requires FileVault clearly off; use --startup-mode after-unlock to retain encryption and require manual unlock. Installer never disables FileVault.')
+        report['manual_unlock_required'] = report['filevault'] == 'on'
+        report['unattended_cold_boot'] = ('blocked until manual disk unlock' if report['manual_unlock_required']
+                                          else 'pending onsite verification')
+        if report['manual_unlock_required']:
+            report['cold_boot_acceptance'] = 'pending onsite power-cycle and manual disk unlock'
         if args.image and not re.fullmatch(r'ghcr\.io/oudbiao/proxy-residential@sha256:[0-9a-f]{64}', args.image):
             raise InstallError('Require immutable ghcr.io/oudbiao/proxy-residential@sha256 digest reference')
         compose = args.compose.expanduser().resolve(strict=True)
@@ -332,7 +342,8 @@ def main(argv=None):
             raise InstallError('Power setting readback mismatch; review saved original values')
         report['status'] = 'installed; boot acceptance pending'
         private_write(target / 'installation-report.json', json.dumps(report, ensure_ascii=False, indent=2))
-        print('proxy-jp: installed with system boot autostart; health=' + report['health']['status'] + '; onsite cold-boot acceptance pending')
+        requirement = '; manual disk unlock required after each cold boot' if report['manual_unlock_required'] else ''
+        print('proxy-jp: installed with system boot autostart; health=' + report['health']['status'] + requirement + '; onsite cold-boot acceptance pending')
         return 0
     except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.SubprocessError) as error:
         # Only our known FileVault guidance is safe to expose. Never print exception/command output.

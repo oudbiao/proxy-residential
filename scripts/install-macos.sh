@@ -28,11 +28,35 @@ bootstrap_formulae() {
         fi
     done
 }
+check_filevault() {
+    local status
+    status="$(fdesetup status 2>/dev/null || true)"
+    case "$status" in
+        'FileVault is Off.') return 0;;
+        'FileVault is On.')
+            if [ "$1" = after-unlock ]; then
+                echo 'proxy-jp: FileVault stays on; manual disk unlock is required after each cold boot' >&2
+                return 0
+            fi
+            echo 'proxy-jp: BLOCKED: FileVault on prevents unattended cold boot; use --startup-mode after-unlock to retain encryption and require manual unlock.' >&2;;
+        *) echo 'proxy-jp: BLOCKED: FileVault status unknown; inspect locally before installation.' >&2;;
+    esac
+    return 2
+}
 main() {
-    local arg uninstall=0 product major minor setup_file script_dir
+    local arg uninstall=0 product major minor setup_file script_dir startup_mode=unattended expect_mode=0
     for arg in "$@"; do
-        case "$arg" in --dry-run) dry_run=1;; --uninstall) uninstall=1;; esac
+        if [ "$expect_mode" = 1 ]; then startup_mode="$arg"; expect_mode=0; continue; fi
+        case "$arg" in
+            --dry-run) dry_run=1;;
+            --uninstall) uninstall=1;;
+            --startup-mode) expect_mode=1;;
+            --startup-mode=*) startup_mode="${arg#*=}";;
+        esac
     done
+    if [ "$expect_mode" = 1 ] || { [ "$startup_mode" != unattended ] && [ "$startup_mode" != after-unlock ]; }; then
+        echo 'proxy-jp: --startup-mode must be unattended or after-unlock' >&2; return 2
+    fi
     if [ "$(uname -s)" != Darwin ] || [ "$(id -u)" = 0 ]; then
         echo 'proxy-jp: run as a non-root macOS user' >&2; return 2
     fi
@@ -44,9 +68,7 @@ main() {
        [ "$(sysctl -n kern.hv_support 2>/dev/null || true)" != 1 ]; then
         echo 'proxy-jp: VZ requires hardware virtualization, ARM macOS13.5+ or Intel macOS15.5+' >&2; return 2
     fi
-    if [ "$uninstall" = 0 ] && [ "$(fdesetup status 2>/dev/null || true)" != 'FileVault is Off.' ]; then
-        echo 'proxy-jp: BLOCKED: FileVault on/unknown prevents unattended cold boot. Review locally; installer never disables FileVault.' >&2; return 2
-    fi
+    if [ "$uninstall" = 0 ]; then check_filevault "$startup_mode" || return 2; fi
     if [ ! -x "$brew_prefix/bin/brew" ]; then
         if [ "$dry_run" = 1 ] || [ "$uninstall" = 1 ]; then
             echo 'proxy-jp: native Homebrew missing; no dependencies installed' >&2; return 2

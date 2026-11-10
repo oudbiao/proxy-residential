@@ -11,16 +11,17 @@
 可选私密 env：<实际路径或无>
 在线 INSTALL_IMAGE：<发布方提供的真实 ghcr.io/oudbiao/proxy-residential@sha256:64位小写摘要；离线填无>
 私密连接清单和 Surge 配置：<私密交付位置，以实际全部 tags 为准>
+启动方式：<unattended；或保留 FileVault、每次冷启动人工解锁的 after-unlock>
 
 先读取 skills/proxy-jp-japan-deploy/SKILL.md、README.md，以及 docs/operations.md 的相应现成命令。方案是 Snell v6 mode=default + ShadowTLS3 + 验证私有 CA 的 frp TLS；不重新设计架构。上海需 Surge Mac 6.7.0+ / iOS 5.20.0+，日本不需 Surge 或 VPS root SSH 密钥。
 
 我授权这台日本 Mac 的首次 CLI 依赖安装、独立 Lima Docker VM、系统 boot LaunchDaemon 与支持的 AC 电源设置。使用普通用户，不对整个安装命令加 sudo；首次需要网络、管理员认证和可能的 CLT 下载。全新机器可无 Homebrew/Python/Docker；Git clone 本身可能触发 CLT，Git 不可用时先取得准备好的源码包。进入根目录，设置真实 INSTALL_IMAGE，再运行一个命令：
 bash scripts/install-macos.sh --image "$INSTALL_IMAGE" --compose /absolute/private/compose.japan.yaml
-外部 env 时增加 --env-file 的实际绝对路径。Compose image 必须完全相同，不用可变标签、不编造摘要。在线不需 manifest/镜像包；离线验证交付校验后运行 bash scripts/install-macos.sh --compose "$PWD/compose.japan.yaml"，只由安装器加载原生架构对应包。
+保留 FileVault 的 after-unlock 交付必须增加 --startup-mode after-unlock；默认 unattended。外部 env 时增加 --env-file 的实际绝对路径。Compose image 必须完全相同，不用可变标签、不编造摘要。在线不需 manifest/镜像包；离线验证交付校验后运行 bash scripts/install-macos.sh --compose "$PWD/compose.japan.yaml"，只由安装器加载原生架构对应包，按交付模式增加启动参数。
 
 识别物理 CPU，Rosetta 不能使 Apple Silicon 变成 amd64。保留现有 Desktop/OrbStack、context 和工作负载；安装器创建独立引擎，所有日本 Docker 操作都使用 ~/.proxy-jp/bin/docker 或 bin/compose（自定义 install-dir 时替换）。不要迁移/清理已有工作负载。检查已有目录/VM/daemon，冲突不覆盖。--dry-run 是只读且不安装缺失依赖；registry 校验延后到正式安装。
 
-FileVault 必须明确 Off，否则 BLOCKED；不要自动禁用 FileVault、开自动登录或保存解锁口令。区分 autorestartatconnect 的通电开机能力、仅 autorestart 的掉电恢复和两者不支持；核对报告的原始/实际电源值。不承诺笔记本合盖。当前安装成功不能当作冷启动通过。只有现场负责人另行授权并安排中断窗口后，才在窗口内做关机/断电接电测试；全程保持所有用户未登录，确认系统服务、全部 tag 注册和实际上海流量。无窗口则 PENDING，不自行重启。
+默认 unattended 要求 FileVault 明确 Off；after-unlock 允许明确 On 或 Off，未知状态一律 BLOCKED。保留 FileVault 时每次冷启动须人工解锁；不禁用加密、不开自动登录、不保存解锁口令。区分 autorestartatconnect 的通电开机能力、仅 autorestart 的掉电恢复和两者不支持；电源配置不能解锁磁盘，核对报告的原始/实际电源值。不承诺笔记本合盖。当前安装成功不能当作冷启动通过。只有现场负责人另行授权并安排中断窗口后，才做关机/断电测试：unattended 全程不登录/不解锁；after-unlock 记录人工解锁后系统服务自动恢复全部 tag 和实际上海流量，不能报告无人解锁冷启动 PASS。无窗口则 PENDING，不自行重启。
 
 检查安装副本权限、installation-report.json、system/io.lima-vm.daemon.proxy-jp 的 running/PID、专用 socket、容器和每个 tag；partial 健康退出0不等于全在线。保留全部条目，某一不可用时保留其他链路并按 tag 排障。不要输出完整 Compose、URI 或凭据。
 
