@@ -1,19 +1,19 @@
 # proxy-jp 部署设计
 
 日期：2026-11-10  
-状态：用户已选择 Snell + TLS、frp 隧道，并要求一个日本端容器同时连接三台 VPS，在 Compose 中配置，在 Surge 手动选择。
+状态：用户已选择 Snell v6 + TLS、frp 隧道，并要求一个日本端容器按需连接任意数量 VPS，在 Compose 中用带 tag 的数组配置，在 Surge 手动选择。
 
 ## 需求与数据流
 
-上海 Surge → VPS 入口 → frp TLS 反向隧道 → 日本 Mac Docker → 目标网站。网站连接由日本端建立，使用日本网络出口。日本 Mac 主动连接各 VPS，不要求公网 IP 或入站映射。日本 Mac 可以自动登录专用账户，登录后启动 Docker 和容器。
+上海 Surge → VPS 入口 → frp TLS 反向隧道 → 日本 Mac Docker → 目标网站。网站连接由日本端建立，使用日本网络出口。日本 Mac 主动连接各 VPS，不要求公网 IP 或入站映射。落地点 Mac 默认 Apple Silicon，自动检测物理架构（含 Rosetta 场景）并支持 Intel。使用命令行安装 Docker CLI、Compose 与专用 Lima Docker 引擎；系统启动后、任何用户登录前自动运行，不依赖自动登录。2026-11-10 用户最新要求覆盖先前的登录后启动方案。
 
-日本端一个容器同时连接三台 VPS，Compose 明确提供 VPS_1、VPS_2、VPS_3 环境项，每项填写对应 VPS 生成的一条连接串。允许只填一台或两台，运行时按编号读取非空的 VPS_N 项。每台 VPS 有独立令牌、代理密码和 TLS 信任材料，互不要求共享身份文件。每台 VPS 输出自己的 Surge 节点；用户将节点加入 select 策略组后手动选择，不增加自动测速切换功能。
+日本端一个容器按需连接多个 VPS（例如 1、3、10 台），Compose 的 VPS_LIST 环境项填写 JSON 数组，每项格式为 {"tag":"香港A","connection":"proxyjp://..."}。数组长度按实际配置决定，不固定三个槽位。tag 必须唯一，允许 Unicode 字母、数字、点、横线和下划线，禁止配置分隔符、路径和控制字符。每台 VPS 有独立令牌、代理密码和 TLS 信任材料，互不要求共享身份文件。每台 VPS 输出自己的 Surge 节点；用户将节点加入 select 策略组后手动选择，不增加自动测速切换功能。
 
 ## 协议
 
-入口使用 Snell v4 + ShadowTLS v3；TLS 指 Surge 官方支持的 ShadowTLS 包裹层，不使用已经不适用于现代 Snell 的 obfs=tls 参数。Snell 负责代理数据加密，ShadowTLS 提供真实 TLS 握手外观和额外认证。默认握手主机 www.cloudflare.com:443，可在 VPS 初始化时修改，无需拥有该域名或签发证书。
+入口使用 Snell v6 + ShadowTLS v3；TLS 指 Surge 官方支持的 ShadowTLS 包裹层，不使用已经不适用于现代 Snell 的 obfs=tls 参数。Snell 负责代理数据加密，ShadowTLS 提供真实 TLS 握手外观和额外认证。默认握手主机 www.cloudflare.com:443，可在 VPS 初始化时修改，无需拥有该域名或签发证书。
 
-使用 sing-box 1.14.4 实现 ShadowTLS 和 Snell。该版本的 Snell 入站 version=5 支持 v4 的线协议；Surge 输出显式使用 version=4，所有 UDP 使用 UDP over TCP，不启用需要另外开放 UDP 端口的 Snell v5 QUIC Proxy Mode。此兼容关系应以官方文档及真实链路测试验证。
+使用 sing-box 1.14.4 实现 ShadowTLS 和 Snell。Snell 服务端和客户端均显式使用 version=6、mode=default，保持加密与流量整形；PSK 为 12–255 字节的随机凭证。UDP 使用 UDP over TCP，Snell v6 无 QUIC Proxy Mode，无需额外 UDP 端口。实际固定版本二进制已通过 v6 入站/出站配置检查、三中继隔离端到端 TCP/UDP 验证及已授权公网中继 HTTPS 验证；真实 Surge/日本现场仍待验收。Surge 要求支持 Snell v6 的版本，官方手册列明 Mac 6.7.0+、iOS 5.20.0+；接收方应记录实际构建版本。
 
 隧道使用 frp 0.72.0，TCP 传输、强制 TLS。日本端验证 VPS 证书，使用独立随机令牌认证。证书可由初始化程序创建私有 CA 签发。默认端口：TCP 8443 给 Surge，TCP 7000 给 frpc，均可调整。VPS 只允许注册指定代理端口。
 
@@ -37,17 +37,17 @@ VPS 只运行 frps，透明转发至日本端；入口的 ShadowTLS 与 Snell �
 
 ## macOS 启动和离线分发
 
-提供日本端 Compose、环境文件模板、安装/卸载 LaunchAgent 脚本。安装到当前账户独立目录，保存 Docker CLI 的绝对路径，启动所选 Docker Desktop 或 OrbStack，等待引擎就绪，再启动 Compose。支持当前 Docker context；不默认切换用户其他工作负载的 context。支持安装配置检查模式，在不注册系统任务时生成并检查 plist。
+提供日本端 Compose、环境文件模板、命令行 bootstrap 和安装/卸载脚本。默认安装到当前账户的 ~/.proxy-jp，使用专用 Lima Docker VM 和系统 LaunchDaemon，在登录前启动。保存工具绝对路径、专用 Unix socket 和独立 Docker CLI 配置，不切换现有全局 context。dry-run 只检查并输出计划，不创建安装文件或更改系统。具体要求见下文“最新开机要求”。
 
-自动登录、FileVault 解锁、电源和休眠由设备管理员配置；脚本不修改这些系统策略。仓库地址 192.168.50.2 是局域网地址，远端部署不能依赖能 clone 该地址。提供按架构构建并导出 Docker 镜像的脚本，以及离线复制、docker load 和部署说明。镜像与生成的秘密不提交 Git。
+系统服务不依赖自动登录。安装器检测 FileVault，不能自行绕过磁盘解锁；检测并配置机器支持的通电/断电恢复和 AC 空闲睡眠选项，记录原值。仓库地址 192.168.50.2 是局域网地址，远端部署不能依赖能 clone 该地址。提供按架构构建导出的业务镜像离线包；首次引擎安装仍需网络获取工具和 Linux VM 基础镜像。镜像与生成的秘密不提交 Git。
 
 ## 验证与交付边界
 
 使用真实 frp / sing-box 配置校验。Python 测试覆盖生成/解析、无效端口、重复入口、秘密权限、防覆盖、证书、子进程退出与关闭；只为真实风险编写测试，不测试文档文本。
 
-端到端测试在隔离 Docker 网络运行三台 VPS、一个日本端和测试客户端：目标服务仅在日本出口网络存在。验证三台 VPS 的 TCP/UDP、域名由日本端解析、错误凭证拒绝、停一台 VPS 不影响另两台、恢复后自动重连、日本容器退出后节点不可用。验证实际镜像启动和健康状态。
+端到端测试在隔离 Docker 网络运行三台 VPS（另有十条目配置生成测试）、一个日本端和测试客户端：目标服务仅在日本出口网络存在。验证三台 VPS 的 TCP/UDP、域名由日本端解析、错误凭证拒绝、停一台 VPS 不影响另两台、恢复后自动重连、日本容器退出后节点不可用。验证实际镜像启动和健康状态。
 
-实际 VPS、日本 Mac、上海 Surge 的出口 IP、线路速度和设备重启恢复，需要设备地址/访问方式后实测。本地模拟不能冒充实际设备联调。
+用户已授权实际 VPS 部署和中继测试；日本 Mac 通过 Skill 交接给现场人员。日本公网出口、上海真实 Surge、速度和无人登录的断电/冷启动恢复仍需现场实测。本地模拟不能冒充实际设备联调。
 
 ## 官方依据
 
@@ -57,3 +57,31 @@ VPS 只运行 frps，透明转发至日本端；入口的 ShadowTLS 与 Snell �
 - https://sing-box.sagernet.org/configuration/inbound/snell/
 - https://sing-box.sagernet.org/configuration/inbound/shadowtls/
 - https://gofrp.org/en/docs/features/common/network/network-tls/
+
+## 实机部署与日本端交接补充
+
+用户授权的实际 VPS 清单、地址、标签、端口、SSH 方式及部署状态仅保存在忽略的私密目录，不提交任何 Git 仓库或公共镜像。部署仅创建本项目服务和目录，不改现有服务。
+
+用户要求日本 Mac 交接给其他人部署，交付可移植 Skill、可复制的交接提示词和离线包。离线包包含 arm64/amd64 镜像、已填私密配置的 Compose 数组、安装程序、Surge 配置和 SHA256清单；不包含 VPS root SSH私钥、CA私钥或服务端私钥。接收方在日本Mac执行；本次不要求其远程访问资料。实际日本出口与设备重启验收由交接执行方完成并回报。
+
+用户最新协议要求：Snell 使用 v6。此要求覆盖先前 v4 客户端/v5 服务端兼容方案；镜像、生成配置、测试与交接内容必须全部按 v6 交付。
+
+实机部署记录与验收证据单独私下交付，不放入公共文档。实际日本出口、上海 Surge 与 Mac 无登录冷启动仍需现场验收。
+
+
+## 最新开机要求：无需登录的命令行部署
+
+默认使用 Lima >=2.2 的官方 `limactl autostart enable --condition=boot` 系统 LaunchDaemon（当前稳定版本2.3.0）。专用 `LIMA_HOME`、专用 `proxy-jp` VM 和显式 Docker Unix socket 与用户原有 Docker Desktop/OrbStack/context 隔离。Docker 引擎在 Linux VM 中由 systemd 启用；容器通过 `restart: unless-stopped` 随引擎恢复，无 GUI 应用或用户 LaunchAgent 依赖。安装数据默认放在 `~/.proxy-jp`，Unix socket 路径须在 macOS 长度限制内。
+
+提供一个 shell 入口：检测 macOS、物理 CPU、Homebrew、可执行 Python3、Lima、Docker CLI 与 Compose；缺少时通过官方 Homebrew 命令行流程安装，Apple Silicon 使用原生 arm64 工具链。安装需要首次管理员权限及联网下载工具和 Linux VM 基础镜像，业务镜像从交付离线包只加载对应的一个架构。已有工具可复用，已有 VM/同名安装不得覆盖；不切换全局 Docker context、不影响其他工作负载。
+
+安装器检测 FileVault、硬件型号、电源能力及现状。FileVault 启用/状态不明时，不能保证无人解锁的冷启动，必须明确 BLOCKED；不得自行关闭加密或保存账户密码。支持 `autorestartatconnect` 的机器配置通电启动；仅支持 `autorestart` 时只能声明断电恢复后启动，二者不得混同。按设备支持配置接通电源时不自动睡眠，记录原值以便恢复；不修改 NVRAM，不承诺合盖笔记本持续运行。电源能力不满足时记录实际限制。操作系统服务配置不代替现场断电冷启动验证：须在现场授权窗口内保持所有用户未登录，验证 VM、Docker、全部 tag 注册与上海流量，分别记录证据。
+
+参考：[Lima 系统启动](https://lima-vm.io/docs/usage/autostart/)、[Lima Docker](https://lima-vm.io/docs/examples/containers/docker/)、[Apple 通电开机支持范围](https://support.apple.com/en-gb/125517)、[Apple FileVault](https://support.apple.com/en-mn/guide/mac-help/-mh11785/mac)。
+
+
+## GitHub 与镜像公开分发
+
+用户追加镜像仓库 https://github.com/oudbiao/proxy-residential.git，原 Git 同步保留。公共代码、文档、CI 和通用部署参考不得包含实际 VPS 清单/地址/tag/端口/SSH/凭据/日志；已有未发布历史中的真实样例也须从将发布的历史排除。具体现场 Skill 和配置放在忽略目录单独编辑供用户复制，不上传 GitHub、原 Git、Actions artifact 或镜像。
+
+提供 GHCR linux/arm64+linux/amd64 镜像，接收方使用不可变 digest 和正常 docker 命令拉取。安装器保留离线模式，并新增 --image ghcr.io/oudbiao/proxy-residential@sha256:<digest> 在线模式，在专用引擎创建后只拉取当前物理架构，验证镜像平台及 RepoDigest。GitHub Actions 使用仓库 GITHUB_TOKEN 发布通用镜像；发布成功和匿名可拉取性必须实测，不能从 CI 文件或公开源码仓库推断。首次 GHCR 包可能默认私有；目标是不向日本部署人员分发维护方的 GitHub 凭据。

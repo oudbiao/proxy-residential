@@ -1,0 +1,6 @@
+# Whitelist only image sources, including when credentials use custom output paths.
+**
+!Dockerfile
+!.dockerignore
+!proxy_jp/
+!proxy_jp/*.py

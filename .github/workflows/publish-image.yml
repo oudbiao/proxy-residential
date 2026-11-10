@@ -1,0 +1,102 @@
+name: Publish immutable multiarch image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/oudbiao/proxy-residential
+
+jobs:
+  test:
+    name: Test linux/${{ matrix.arch }}
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build native test image (source allowlist context)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: proxy-jp:0.1.0
+          labels: |
+            org.opencontainers.image.source=https://github.com/oudbiao/proxy-residential
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Unit, shell, Compose and actual binary configuration checks
+        run: bash scripts/check.sh
+      - name: Isolated real TCP, UDP and failure integration checks
+        run: python3 tests/e2e.py
+
+  publish:
+    name: Publish verified platforms
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Authenticate only with the job token
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish multiarch manifest after both native test jobs pass
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+            ${{ env.IMAGE }}:0.1.0
+          labels: |
+            org.opencontainers.image.source=https://github.com/oudbiao/proxy-residential
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Record immutable installation reference
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "INSTALL_IMAGE=$IMAGE@$DIGEST"
+          {
+            echo '### Immutable installation reference'
+            echo "\`$IMAGE@$DIGEST\`"
+            echo
+            echo 'Platforms: linux/amd64, linux/arm64. Tags: sha-<full commit>, 0.1.0.'
+            echo 'First publication creates a private GHCR package by default. Set package visibility to Public and verify anonymous pulls before distribution.'
+          } >> "$GITHUB_STEP_SUMMARY"

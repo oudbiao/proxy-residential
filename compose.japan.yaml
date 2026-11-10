@@ -1,0 +1,28 @@
+name: proxy-jp
+services:
+  japan:
+    image: ${PROXY_JP_IMAGE:-proxy-jp:0.1.0}
+    command: [client]
+    environment:
+      # Optional --env-file can set VPS_LIST for this interpolation template.
+      # To configure inline, replace the next line with this literal block:
+      # VPS_LIST: |-
+      #   [
+      #     {"tag":"香港A", "connection":"proxyjp://..."},
+      #     {"tag":"新加坡B", "connection":"proxyjp://..."}
+      #   ]
+      VPS_LIST: ${VPS_LIST:-[]}
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /run/proxy-jp:uid=10001,gid=10001,mode=0700
+      - /tmp:uid=10001,gid=10001,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 12s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
