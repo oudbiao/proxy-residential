@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env
+*.env
+!.env.example
+state/
+build/
+dist/
+.superpowers/
+.DS_Store
